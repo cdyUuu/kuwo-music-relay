@@ -173,7 +173,7 @@ QQ 音乐的 `.mgg` 文件采用 4 声道 OGG Vorbis 编码，标称码率 640kb
 
 ## 算法来源
 
-解密算法基于 [nonebot-plugin-kuwo](https://github.com/nonebot/nonebot-plugin-kuwo) 的 Rust 实现。
+解密算法基于 [nonebot-plugin-kuwo](https://github.com/006lp/nonebot-plugin-kuwo) 的 Rust 实现。
 
 ## 许可证
 

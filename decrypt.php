@@ -20,7 +20,7 @@
  *   - .mgg   / .mggl    →  OGG Vorbis audio (audio/ogg)
  *   - .mmp3              →  MP3 audio (audio/mpeg)
  *
- * Algorithm source: nonebot-plugin-kuwo (Rust implementation)
+ * Algorithm source: https://github.com/006lp/nonebot-plugin-kuwo (Rust implementation)
  * Licensed under the MIT License.
  */
 

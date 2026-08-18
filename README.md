@@ -173,7 +173,7 @@ Contributions are welcome! Please follow these steps:
 
 ## Algorithm Credits
 
-The decryption algorithm is based on the Rust implementation from [nonebot-plugin-kuwo](https://github.com/nonebot/nonebot-plugin-kuwo).
+The decryption algorithm is based on the Rust implementation from [nonebot-plugin-kuwo](https://github.com/006lp/nonebot-plugin-kuwo).
 
 ## License
 
