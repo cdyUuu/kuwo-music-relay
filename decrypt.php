@@ -996,16 +996,15 @@ class MflacRelayServer
                         ]);
                     }
                 } else {
-                    // Cache does not exist, probe file size + FLAC metadata from CDN
-                    $probe = $this->probeRemoteFile($url, $ekey);
-                    $remoteSize = $probe['size'];
+                    // Cache does not exist, fast HEAD probe for file size only
+                    // Don't download/decrypt for metadata — player gets it from the stream
+                    $remoteSize = $this->getRemoteFileSize($url);
                     if ($remoteSize > 0) {
                         @file_put_contents($cacheFile . '.size', (string)$remoteSize);
                     }
                     $this->log('INFO', 'HEAD request (no cache)', [
                         'remote_size' => $remoteSize,
                         'format' => $this->audioFormat,
-                        'has_flac_meta' => $probe['flac'] !== null,
                     ]);
                     http_response_code(200);
                     header('Content-Type: ' . $this->contentType);
@@ -1014,10 +1013,6 @@ class MflacRelayServer
                     header('X-Accel-Buffering: no');
                     if ($remoteSize > 0) {
                         header('Content-Length: ' . $remoteSize);
-                    }
-                    // Send FLAC metadata headers (duration, sample rate, etc.)
-                    if ($probe['flac'] !== null) {
-                        $this->sendFlacHeaders($probe['flac']);
                     }
                 }
                 $this->log('INFO', 'Request completed', [
@@ -1529,8 +1524,7 @@ class MflacRelayServer
         // Streaming state
         $offset = $resumeOffset;        // Decrypt offset (start from cached position when resuming)
         $buffer = '';                   // Encrypted data buffer
-        $firstChunkSize = 65536;        // First chunk 64KB — fast playback start
-        $normalChunkSize = 262144;      // Subsequent 256KB — high throughput
+        $firstChunkSent = false;        // Whether first chunk has been sent (for fast start)
         $totalDownloaded = 0;
         $totalDecrypted = 0;
         $headersSent = false;           // Whether HTTP headers have been sent
@@ -1689,11 +1683,11 @@ class MflacRelayServer
             $totalDecrypted += strlen($decrypted);
         };
 
-        // cURL write callback
+        // cURL write callback — send data to player ASAP, no buffering for first chunk
         $self = $this;
         $writeCallback = function ($ch, $data) use (
             &$buffer, &$totalDownloaded, &$processChunk,
-            &$clientDisconnected, $firstChunkSize, $normalChunkSize,
+            &$clientDisconnected, &$firstChunkSent,
             $checkConnection, $self
         ) {
             // Client disconnected, stop processing (returning 0 will abort cURL)
@@ -1705,16 +1699,18 @@ class MflacRelayServer
             $totalDownloaded += $len;
             $buffer .= $data;
 
-            // First chunk uses small threshold for fast playback start, then larger threshold for throughput
-            $threshold = ($totalDownloaded <= $firstChunkSize * 2) ? $firstChunkSize : $normalChunkSize;
-
-            // Decrypt and output when buffer reaches threshold
-            while (strlen($buffer) >= $threshold && !$clientDisconnected) {
-                $chunk = substr($buffer, 0, $threshold);
-                $buffer = substr($buffer, $threshold);
-                $processChunk($chunk);
-                // After first chunk output, switch to normal chunk size
-                $threshold = $normalChunkSize;
+            // First chunk: send immediately for fastest first-byte response
+            if (!$firstChunkSent) {
+                $processChunk($buffer);
+                $buffer = '';
+                $firstChunkSent = true;
+            } else {
+                // Subsequent chunks: buffer 256KB for throughput
+                while (strlen($buffer) >= 262144 && !$clientDisconnected) {
+                    $chunk = substr($buffer, 0, 262144);
+                    $buffer = substr($buffer, 262144);
+                    $processChunk($chunk);
+                }
             }
 
             // Periodically check connection status
@@ -1864,12 +1860,14 @@ class MflacRelayServer
      */
     private function streamRangeFromCDN(string $url, string $ekey, int $rangeStart, ?int $rangeEnd, string $cacheFile): void
     {
-        // Get total file size (prefer .size file, then CDN)
+        // Get total file size from .size file (if cached from a previous HEAD request)
+        // Don't make a separate HEAD request to CDN — the player is waiting for data
         $totalSize = 0;
         $sizeFile = $cacheFile . '.size';
         if (file_exists($sizeFile)) {
             $totalSize = (int)file_get_contents($sizeFile);
         }
+        // If still unknown, try a quick HEAD (2s timeout) — better than no Content-Length
         if ($totalSize === 0) {
             $totalSize = $this->getRemoteFileSize($url);
             if ($totalSize > 0) {
@@ -1894,7 +1892,7 @@ class MflacRelayServer
         // Streaming state
         $offset = $rangeStart;
         $buffer = '';
-        $chunkSize = 262144; // 256KB
+        $firstChunkSent = false;   // Whether first chunk has been sent (for fast start)
         $totalDownloaded = 0;
         $totalDecrypted = 0;
         $headersSent = false;
@@ -1984,10 +1982,11 @@ class MflacRelayServer
             $totalDecrypted += strlen($decrypted);
         };
 
-        // cURL write callback
+        // cURL write callback — send data to player ASAP, no buffering for first chunk
         $writeCallback = function ($ch, $data) use (
             &$buffer, &$totalDownloaded, &$processChunk,
-            &$clientDisconnected, $chunkSize, $checkConnection
+            &$clientDisconnected, &$firstChunkSent,
+            $checkConnection
         ) {
             if ($clientDisconnected) {
                 return 0;
@@ -1997,10 +1996,18 @@ class MflacRelayServer
             $totalDownloaded += $len;
             $buffer .= $data;
 
-            while (strlen($buffer) >= $chunkSize && !$clientDisconnected) {
-                $chunk = substr($buffer, 0, $chunkSize);
-                $buffer = substr($buffer, $chunkSize);
-                $processChunk($chunk);
+            // First chunk: send immediately (even if small) for fastest first-byte
+            if (!$firstChunkSent) {
+                $processChunk($buffer);
+                $buffer = '';
+                $firstChunkSent = true;
+            } else {
+                // Subsequent chunks: buffer 256KB for throughput
+                while (strlen($buffer) >= 262144 && !$clientDisconnected) {
+                    $chunk = substr($buffer, 0, 262144);
+                    $buffer = substr($buffer, 262144);
+                    $processChunk($chunk);
+                }
             }
 
             if (!$checkConnection()) {
