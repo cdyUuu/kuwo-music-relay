@@ -186,6 +186,21 @@ This project is intended for **personal study and technical research purposes on
 - If you are a copyright holder and believe this project infringes your rights, please contact the repository owner for removal.
 - Commercial use, redistribution of decrypted content, and any form of profit-making from this tool are strictly prohibited.
 
+## Compatible LX Music Plugin
+
+This server is designed to work with the LX Music custom source plugin:
+[lx-music-xinghai-source](https://github.com/cdyUuu/lx-music-xinghai-source)
+
+The plugin automatically routes Kuwo encrypted audio (`.mflac` / `.mgg`) through
+this relay server for real-time decryption. **Please use the above plugin as the
+canonical source for compatibility.**
+
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License with Non-Commercial Restriction — see [LICENSE](LICENSE) for details.
+
+This project uses a modified MIT license that **prohibits commercial use**.
+Commercial use includes selling the software, using it in paid services,
+distributing decrypted content for profit, or integrating it into commercial
+products. Personal study, technical research, and non-commercial educational
+use are permitted.

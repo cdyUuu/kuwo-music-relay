@@ -21,7 +21,7 @@
  *   - .mmp3              →  MP3 audio (audio/mpeg)
  *
  * Algorithm source: https://github.com/006lp/nonebot-plugin-kuwo (Rust implementation)
- * Licensed under the MIT License.
+ * Licensed under the MIT License with Non-Commercial Restriction.
  */
 
 // ============================================================
