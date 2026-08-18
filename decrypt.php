@@ -996,14 +996,16 @@ class MflacRelayServer
                         ]);
                     }
                 } else {
-                    // Cache does not exist, probe file size from CDN
-                    $remoteSize = $this->getRemoteFileSize($url);
+                    // Cache does not exist, probe file size + FLAC metadata from CDN
+                    $probe = $this->probeRemoteFile($url, $ekey);
+                    $remoteSize = $probe['size'];
                     if ($remoteSize > 0) {
                         @file_put_contents($cacheFile . '.size', (string)$remoteSize);
                     }
                     $this->log('INFO', 'HEAD request (no cache)', [
                         'remote_size' => $remoteSize,
                         'format' => $this->audioFormat,
+                        'has_flac_meta' => $probe['flac'] !== null,
                     ]);
                     http_response_code(200);
                     header('Content-Type: ' . $this->contentType);
@@ -1012,6 +1014,10 @@ class MflacRelayServer
                     header('X-Accel-Buffering: no');
                     if ($remoteSize > 0) {
                         header('Content-Length: ' . $remoteSize);
+                    }
+                    // Send FLAC metadata headers (duration, sample rate, etc.)
+                    if ($probe['flac'] !== null) {
+                        $this->sendFlacHeaders($probe['flac']);
                     }
                 }
                 $this->log('INFO', 'Request completed', [
@@ -1346,6 +1352,97 @@ class MflacRelayServer
         if (!empty($flacInfo['bps'])) {
             header('X-Bits-Per-Sample: ' . $flacInfo['bps']);
         }
+    }
+
+    /**
+     * Probe remote file: get size and FLAC metadata (first 256 bytes decrypted)
+     * Returns ['size' => int, 'flac' => ?array]
+     */
+    private function probeRemoteFile(string $url, string $ekey): array
+    {
+        $result = ['size' => 0, 'flac' => null];
+
+        // Step 1: HEAD request for size (short timeout)
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_NOBODY => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => 3,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_HTTPHEADER => [
+                'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            ],
+        ]);
+        curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $contentLength = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+        curl_close($ch);
+
+        if (($httpCode === 200 || $httpCode === 206) && $contentLength > 0) {
+            $result['size'] = (int)$contentLength;
+        }
+
+        // Step 2: If FLAC, download first 256 bytes to parse metadata
+        if ($this->audioFormat === 'flac') {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RANGE => '0-255',
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_TIMEOUT => 3,
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_HTTPHEADER => [
+                    'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                ],
+            ]);
+            $data = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($data !== false && strlen($data) >= 42 && ($code === 200 || $code === 206)) {
+                try {
+                    $cipher = QmcKeyDerivation::createCipherFromEkey($ekey);
+                    $decrypted = $cipher->decrypt($data, 0);
+                    $result['flac'] = $this->parseFlacInfo($decrypted);
+
+                    // If HEAD didn't give size, try Content-Range
+                    if ($result['size'] === 0 && $code === 206) {
+                        $headerSize = @curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+                        // Can't get total from this, try Content-Range in next call
+                    }
+                } catch (\Throwable $e) {
+                    // Decryption failed, continue without metadata
+                }
+            }
+        }
+
+        // Step 3: If size still unknown, try Range bytes=0-0
+        if ($result['size'] === 0) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RANGE => '0-0',
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_TIMEOUT => 3,
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_HEADER => true,
+                CURLOPT_NOBODY => false,
+                CURLOPT_HTTPHEADER => [
+                    'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                ],
+            ]);
+            $response = curl_exec($ch);
+            curl_close($ch);
+
+            if (preg_match('/Content-Range:\s*bytes\s+\d+-\d+\/(\d+)/i', $response, $m)) {
+                $result['size'] = (int)$m[1];
+            }
+        }
+
+        return $result;
     }
 
     /**
