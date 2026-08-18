@@ -1008,6 +1008,8 @@ class MflacRelayServer
                     http_response_code(200);
                     header('Content-Type: ' . $this->contentType);
                     header('Accept-Ranges: bytes');
+                    header('Cache-Control: public, max-age=3600');
+                    header('X-Accel-Buffering: no');
                     if ($remoteSize > 0) {
                         header('Content-Length: ' . $remoteSize);
                     }
@@ -1351,13 +1353,13 @@ class MflacRelayServer
      */
     private function getRemoteFileSize(string $url): int
     {
-        // Try HEAD request first
+        // Try HEAD request first (short timeout — player is waiting)
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_NOBODY => true,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_TIMEOUT => 5,
-            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 3,
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_HTTPHEADER => [
                 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -1378,8 +1380,8 @@ class MflacRelayServer
             CURLOPT_RANGE => '0-0',
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_TIMEOUT => 5,
-            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 3,
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_HEADER => true,
             CURLOPT_NOBODY => false,
@@ -1802,9 +1804,13 @@ class MflacRelayServer
         $cdnHttpCode = 0;
         $clientDisconnected = false;
 
-        // cURL header callback: capture total size (Content-Range: bytes X-Y/Z)
+        // cURL header callback: capture total size from Content-Range or Content-Length
         $headerCallback = function ($ch, $header) use (&$totalSize, $sizeFile) {
             if (preg_match('/Content-Range:\s*bytes\s+\d+-\d+\/(\d+)/i', $header, $m)) {
+                $totalSize = (int)$m[1];
+                @file_put_contents($sizeFile, (string)$totalSize);
+            } elseif ($totalSize === 0 && preg_match('/Content-Length:\s*(\d+)/i', $header, $m)) {
+                // CDN returned 200 (no Range support) → Content-Length = total size
                 $totalSize = (int)$m[1];
                 @file_put_contents($sizeFile, (string)$totalSize);
             }
@@ -1844,14 +1850,21 @@ class MflacRelayServer
                     $length = $rangeEnd - $rangeStart + 1;
                 }
 
-                http_response_code(206);
-                header('Content-Type: ' . $this->contentType);
-                header('Accept-Ranges: bytes');
+                // When total size is unknown, return 200 (full content) instead of
+                // 206 (partial) — a 206 without Content-Range is invalid HTTP and
+                // causes players to reject the response and keep degrading quality.
                 if ($totalSize > 0 && $rangeEnd !== null) {
+                    http_response_code(206);
+                    header('Content-Type: ' . $this->contentType);
+                    header('Accept-Ranges: bytes');
                     header("Content-Range: bytes {$rangeStart}-{$rangeEnd}/{$totalSize}");
-                }
-                if ($length > 0) {
-                    header('Content-Length: ' . $length);
+                    if ($length > 0) {
+                        header('Content-Length: ' . $length);
+                    }
+                } else {
+                    http_response_code(200);
+                    header('Content-Type: ' . $this->contentType);
+                    header('Accept-Ranges: bytes');
                 }
                 header('Cache-Control: public, max-age=3600');
                 header('X-Accel-Buffering: no');
