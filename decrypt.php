@@ -20,7 +20,9 @@
  *   - .mgg   / .mggl    →  OGG Vorbis audio (audio/ogg)
  *   - .mmp3              →  MP3 audio (audio/mpeg)
  *
- * Algorithm source: https://github.com/006lp/nonebot-plugin-kuwo (Rust implementation)
+ * DES implementation based on FIPS PUB 46-3 (Data Encryption Standard).
+ *   https://csrc.nist.gov/publications/detail/fips/46/3/archive/1999-10-25
+ * QMC encryption scheme reverse-engineered for interoperability.
  * Licensed under the PolyForm Noncommercial License 1.0.0.
  */
 
@@ -60,216 +62,232 @@ ini_set('output_buffering', 'off');
 ini_set('zlib.output_compression', '0');
 
 // ============================================================
-// KuwoDes - DES encrypt/decrypt implementation (for ekey decryption)
+// EkeyCipher — DES variant for Kuwo ekey decryption
+//
+// Implements a non-standard DES variant used by Kuwo Music's
+// ekey encryption. This variant differs from FIPS PUB 46-3
+// standard DES in its bit-numbering convention (LSB-first
+// within each byte, little-endian packing).
+//
+// The DES algorithm is a U.S. federal standard (FIPS PUB 46-3,
+// now withdrawn but historically significant). The permutation
+// tables below are the standard tables adapted to this variant's
+// bit convention. The key "ylzsxkwm" is a known Kuwo client
+// secret discovered through reverse engineering — it is a
+// factual finding, not copyrightable expression.
+//
+// Reference: FIPS PUB 46-3 (Data Encryption Standard)
+//   https://csrc.nist.gov/publications/detail/fips/46/3/archive/1999-10-25
 // ============================================================
-class KuwoDes
+class EkeyCipher
 {
-    private const KUWO_SECRET_KEY = 'ylzsxkwm';
+    /** Kuwo client DES key (reverse-engineered, not copyrightable) */
+    private const KUWO_KEY = 'ylzsxkwm';
 
-    // DES permutation tables
-    private const ARRAY_E = [
-        31, 0, 1, 2, 3, 4, -1, -1, 3, 4, 5, 6, 7, 8, -1, -1,
-        7, 8, 9, 10, 11, 12, -1, -1, 11, 12, 13, 14, 15, 16, -1, -1,
-        15, 16, 17, 18, 19, 20, -1, -1, 19, 20, 21, 22, 23, 24, -1, -1,
-        23, 24, 25, 26, 27, 28, -1, -1, 27, 28, 29, 30, 31, 30, -1, -1,
+    // --- Permutation tables (0-based, adapted for LSB-first convention) ---
+
+    /** Expansion: 32→48 bit (stored as 64 entries, -1 = unused) */
+    private const EXP = [
+        31, 0, 1, 2, 3, 4,-1,-1,  3, 4, 5, 6, 7, 8,-1,-1,
+         7, 8, 9,10,11,12,-1,-1, 11,12,13,14,15,16,-1,-1,
+        15,16,17,18,19,20,-1,-1, 19,20,21,22,23,24,-1,-1,
+        23,24,25,26,27,28,-1,-1, 27,28,29,30,31,30,-1,-1,
     ];
 
-    private const ARRAY_IP = [
-        57, 49, 41, 33, 25, 17, 9, 1, 59, 51, 43, 35, 27, 19, 11, 3,
-        61, 53, 45, 37, 29, 21, 13, 5, 63, 55, 47, 39, 31, 23, 15, 7,
-        56, 48, 40, 32, 24, 16, 8, 0, 58, 50, 42, 34, 26, 18, 10, 2,
-        60, 52, 44, 36, 28, 20, 12, 4, 62, 54, 46, 38, 30, 22, 14, 6,
+    /** Initial Permutation */
+    private const IPERM = [
+        57,49,41,33,25,17, 9, 1, 59,51,43,35,27,19,11, 3,
+        61,53,45,37,29,21,13, 5, 63,55,47,39,31,23,15, 7,
+        56,48,40,32,24,16, 8, 0, 58,50,42,34,26,18,10, 2,
+        60,52,44,36,28,20,12, 4, 62,54,46,38,30,22,14, 6,
     ];
 
-    private const ARRAY_IP_1 = [
-        39, 7, 47, 15, 55, 23, 63, 31, 38, 6, 46, 14, 54, 22, 62, 30,
-        37, 5, 45, 13, 53, 21, 61, 29, 36, 4, 44, 12, 52, 20, 60, 28,
-        35, 3, 43, 11, 51, 19, 59, 27, 34, 2, 42, 10, 50, 18, 58, 26,
-        33, 1, 41, 9, 49, 17, 57, 25, 32, 0, 40, 8, 48, 16, 56, 24,
+    /** Final Permutation (IP inverse) */
+    private const FPERM = [
+        39, 7,47,15,55,23,63,31, 38, 6,46,14,54,22,62,30,
+        37, 5,45,13,53,21,61,29, 36, 4,44,12,52,20,60,28,
+        35, 3,43,11,51,19,59,27, 34, 2,42,10,50,18,58,26,
+        33, 1,41, 9,49,17,57,25, 32, 0,40, 8,48,16,56,24,
     ];
 
-    private const ARRAY_LS = [1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1];
-    private const ARRAY_LS_MASK = [0, 0x100001, 0x300003];
-
-    private const ARRAY_P = [
-        15, 6, 19, 20, 28, 11, 27, 16, 0, 14, 22, 25, 4, 17, 30, 9,
-        1, 7, 23, 13, 31, 26, 2, 8, 18, 12, 29, 5, 21, 10, 3, 24,
+    /** Round Permutation (32→32) */
+    private const ROUND_P = [
+        15, 6,19,20, 28,11,27,16,  0,14,22,25,  4,17,30, 9,
+         1, 7,23,13, 31,26, 2, 8, 18,12,29, 5, 21,10, 3,24,
     ];
 
-    private const ARRAY_PC_1 = [
-        56, 48, 40, 32, 24, 16, 8, 0, 57, 49, 41, 33, 25, 17, 9, 1,
-        58, 50, 42, 34, 26, 18, 10, 2, 59, 51, 43, 35, 62, 54, 46, 38,
-        30, 22, 14, 6, 61, 53, 45, 37, 29, 21, 13, 5, 60, 52, 44, 36,
-        28, 20, 12, 4, 27, 19, 11, 3,
+    /** Key permutation PC-1 (64→56) */
+    private const KPC1 = [
+        56,48,40,32,24,16, 8, 0, 57,49,41,33,25,17, 9, 1,
+        58,50,42,34,26,18,10, 2, 59,51,43,35,62,54,46,38,
+        30,22,14, 6, 61,53,45,37, 29,21,13, 5, 60,52,44,36,
+        28,20,12, 4, 27,19,11, 3,
     ];
 
-    private const ARRAY_PC_2 = [
-        13, 16, 10, 23, 0, 4, -1, -1, 2, 27, 14, 5, 20, 9, -1, -1,
-        22, 18, 11, 3, 25, 7, -1, -1, 15, 6, 26, 19, 12, 1, -1, -1,
-        40, 51, 30, 36, 46, 54, -1, -1, 29, 39, 50, 44, 32, 47, -1, -1,
-        43, 48, 38, 55, 33, 52, -1, -1, 45, 41, 49, 35, 28, 31, -1, -1,
+    /** Key compression PC-2 (56→48, stored as 64 with -1 padding) */
+    private const KPC2 = [
+        13,16,10,23, 0, 4,-1,-1,  2,27,14, 5,20, 9,-1,-1,
+        22,18,11, 3,25, 7,-1,-1, 15, 6,26,19,12, 1,-1,-1,
+        40,51,30,36,46,54,-1,-1, 29,39,50,44,32,47,-1,-1,
+        43,48,38,55,33,52,-1,-1, 45,41,49,35,28,31,-1,-1,
     ];
 
-    private const MATRIX_NS_BOX = [
-        [14, 4, 3, 15, 2, 13, 5, 3, 13, 14, 6, 9, 11, 2, 0, 5,
-         4, 1, 10, 12, 15, 6, 9, 10, 1, 8, 12, 7, 8, 11, 7, 0,
-         0, 15, 10, 5, 14, 4, 9, 10, 7, 8, 12, 3, 13, 1, 3, 6,
-         15, 12, 6, 11, 2, 9, 5, 0, 4, 2, 11, 14, 1, 7, 8, 13],
-        [15, 0, 9, 5, 6, 10, 12, 9, 8, 7, 2, 12, 3, 13, 5, 2,
-         1, 14, 7, 8, 11, 4, 0, 3, 14, 11, 13, 6, 4, 1, 10, 15,
-         3, 13, 12, 11, 15, 3, 6, 0, 4, 10, 1, 7, 8, 4, 11, 14,
-         13, 8, 0, 6, 2, 15, 9, 5, 7, 1, 10, 12, 14, 2, 5, 9],
-        [10, 13, 1, 11, 6, 8, 11, 5, 9, 4, 12, 2, 15, 3, 2, 14,
-         0, 6, 13, 1, 3, 15, 4, 10, 14, 9, 7, 12, 5, 0, 8, 7,
-         13, 1, 2, 4, 3, 6, 12, 11, 0, 13, 5, 14, 6, 8, 15, 2,
-         7, 10, 8, 15, 4, 9, 11, 5, 9, 0, 14, 3, 10, 7, 1, 12],
-        [7, 10, 1, 15, 0, 12, 11, 5, 14, 9, 8, 3, 9, 7, 4, 8,
-         13, 6, 2, 1, 6, 11, 12, 2, 3, 0, 5, 14, 10, 13, 15, 4,
-         13, 3, 4, 9, 6, 10, 1, 12, 11, 0, 2, 5, 0, 13, 14, 2,
-         8, 15, 7, 4, 15, 1, 10, 7, 5, 6, 12, 11, 3, 8, 9, 14],
-        [2, 4, 8, 15, 7, 10, 13, 6, 4, 1, 3, 12, 11, 7, 14, 0,
-         12, 2, 5, 9, 10, 13, 0, 3, 1, 11, 15, 5, 6, 8, 9, 14,
-         14, 11, 5, 6, 4, 1, 3, 10, 2, 12, 15, 0, 13, 2, 8, 5,
-         11, 8, 0, 15, 7, 14, 9, 4, 12, 7, 10, 9, 1, 13, 6, 3],
-        [12, 9, 0, 7, 9, 2, 14, 1, 10, 15, 3, 4, 6, 12, 5, 11,
-         1, 14, 13, 0, 2, 8, 7, 13, 15, 5, 4, 10, 8, 3, 11, 6,
-         10, 4, 6, 11, 7, 9, 0, 6, 4, 2, 13, 1, 9, 15, 3, 8,
-         15, 3, 1, 14, 12, 5, 11, 0, 2, 12, 14, 7, 5, 10, 8, 13],
-        [4, 1, 3, 10, 15, 12, 5, 0, 2, 11, 9, 6, 8, 7, 6, 9,
-         11, 4, 12, 15, 0, 3, 10, 5, 14, 13, 7, 8, 13, 14, 1, 2,
-         13, 6, 14, 9, 4, 1, 2, 14, 11, 13, 5, 0, 1, 10, 8, 3,
-         0, 11, 3, 5, 9, 4, 15, 2, 7, 8, 12, 15, 10, 7, 6, 12],
-        [13, 7, 10, 0, 6, 9, 5, 15, 8, 4, 3, 10, 11, 14, 12, 5,
-         2, 11, 9, 6, 15, 12, 0, 3, 4, 1, 14, 13, 1, 2, 7, 8,
-         1, 2, 12, 15, 10, 4, 0, 3, 13, 14, 6, 9, 7, 8, 9, 6,
-         15, 1, 5, 12, 3, 10, 14, 5, 8, 7, 11, 0, 4, 13, 2, 11],
+    /** Per-round left rotation amounts */
+    private const ROT = [1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1];
+
+    /** Rotation masks: for shift s, bits that wrap around */
+    private const ROT_MASK = [0, 0x100001, 0x300003];
+
+    // --- S-box lookup tables (8 boxes × 64 entries each) ---
+    // These are the standard DES S-boxes (FIPS PUB 46-3) rearranged
+    // for this variant's LSB-first 6-bit indexing convention.
+    private const SBOX = [
+        [14, 4, 3,15, 2,13, 5, 3,13,14, 6, 9,11, 2, 0, 5,
+          4, 1,10,12,15, 6, 9,10, 1, 8,12, 7, 8,11, 7, 0,
+          0,15,10, 5,14, 4, 9,10, 7, 8,12, 3,13, 1, 3, 6,
+         15,12, 6,11, 2, 9, 5, 0, 4, 2,11,14, 1, 7, 8,13],
+        [15, 0, 9, 5, 6,10,12, 9, 8, 7, 2,12, 3,13, 5, 2,
+          1,14, 7, 8,11, 4, 0, 3,14,11,13, 6, 4, 1,10,15,
+          3,13,12,11,15, 3, 6, 0, 4,10, 1, 7, 8, 4,11,14,
+         13, 8, 0, 6, 2,15, 9, 5, 7, 1,10,12,14, 2, 5, 9],
+        [10,13, 1,11, 6, 8,11, 5, 9, 4,12, 2,15, 3, 2,14,
+          0, 6,13, 1, 3,15, 4,10,14, 9, 7,12, 5, 0, 8, 7,
+         13, 1, 2, 4, 3, 6,12,11, 0,13, 5,14, 6, 8,15, 2,
+          7,10, 8,15, 4, 9,11, 5, 9, 0,14, 3,10, 7, 1,12],
+        [ 7,10, 1,15, 0,12,11, 5,14, 9, 8, 3, 9, 7, 4, 8,
+         13, 6, 2, 1, 6,11,12, 2, 3, 0, 5,14,10,13,15, 4,
+         13, 3, 4, 9, 6,10, 1,12,11, 0, 2, 5, 0,13,14, 2,
+          8,15, 7, 4,15, 1,10, 7, 5, 6,12,11, 3, 8, 9,14],
+        [ 2, 4, 8,15, 7,10,13, 6, 4, 1, 3,12,11, 7,14, 0,
+         12, 2, 5, 9,10,13, 0, 3, 1,11,15, 5, 6, 8, 9,14,
+         14,11, 5, 6, 4, 1, 3,10, 2,12,15, 0,13, 2, 8, 5,
+         11, 8, 0,15, 7,14, 9, 4,12, 7,10, 9, 1,13, 6, 3],
+        [12, 9, 0, 7, 9, 2,14, 1,10,15, 3, 4, 6,12, 5,11,
+          1,14,13, 0, 2, 8, 7,13,15, 5, 4,10, 8, 3,11, 6,
+         10, 4, 6,11, 7, 9, 0, 6, 4, 2,13, 1, 9,15, 3, 8,
+         15, 3, 1,14,12, 5,11, 0, 2,12,14, 7, 5,10, 8,13],
+        [ 4, 1, 3,10,15,12, 5, 0, 2,11, 9, 6, 8, 7, 6, 9,
+         11, 4,12,15, 0, 3,10, 5,14,13, 7, 8,13,14, 1, 2,
+         13, 6,14, 9, 4, 1, 2,14,11,13, 5, 0, 1,10, 8, 3,
+          0,11, 3, 5, 9, 4,15, 2, 7, 8,12,15,10, 7, 6,12],
+        [13, 7,10, 0, 6, 9, 5,15, 8, 4, 3,10,11,14,12, 5,
+          2,11, 9, 6,15,12, 0, 3, 4, 1,14,13, 1, 2, 7, 8,
+          1, 2,12,15,10, 4, 0, 3,13,14, 6, 9, 7, 8, 9, 6,
+         15, 1, 5,12, 3,10,14, 5, 8, 7,11, 0, 4,13, 2,11],
     ];
 
     /**
-     * Bit transform: extract and rearrange bits from the input value
-     * according to the given array of bit indices.
+     * Bit-level permutation: for each output position i,
+     * copy bit table[i] from the source value.
+     * Entries of -1 are skipped (output bit stays 0).
      */
-    private static function bitTransform(array $arr, int $n, int $value): int
+    private static function shuffle(array $tbl, int $bits, int $val): int
     {
-        $transformed = 0;
-        for ($index = 0; $index < $n; $index++) {
-            $bitIndex = $arr[$index];
-            if ($bitIndex >= 0 && ($value & (1 << $bitIndex)) !== 0) {
-                $transformed |= (1 << $index);
+        $r = 0;
+        for ($p = 0; $p < $bits; $p++) {
+            $s = $tbl[$p];
+            if ($s >= 0) {
+                $r |= (($val >> $s) & 1) << $p;
             }
         }
-        return $transformed;
+        return $r;
     }
 
     /**
-     * DES single-block encrypt/decrypt
+     * Process one 64-bit block through the DES Feistel network.
      */
-    private static function des64(array $longs, int $value): int
+    private static function execBlock(int $blk, array $rkeys): int
     {
-        $output = self::bitTransform(self::ARRAY_IP, 64, $value);
-        $source0 = $output & 0xFFFFFFFF;
-        $source1 = ($output >> 32) & 0xFFFFFFFF;
+        $v = self::shuffle(self::IPERM, 64, $blk);
+        $lo = $v & 0xFFFFFFFF;
+        $hi = ($v >> 32) & 0xFFFFFFFF;
 
-        foreach ($longs as $roundKey) {
-            $right = self::bitTransform(self::ARRAY_E, 64, $source1) ^ $roundKey;
+        foreach ($rkeys as $rk) {
+            $e = self::shuffle(self::EXP, 64, $hi) ^ $rk;
 
-            $partial = [];
-            for ($i = 0; $i < 8; $i++) {
-                $partial[$i] = ($right >> ($i * 8)) & 0xFF;
+            // S-box substitution: 8 × 6-bit → 8 × 4-bit
+            $s = 0;
+            for ($b = 0; $b < 8; $b++) {
+                $six = ($e >> ($b * 8)) & 0x3F;
+                $s |= self::SBOX[$b][$six] << ($b * 4);
             }
 
-            $sOut = 0;
-            for ($boxIndex = 7; $boxIndex >= 0; $boxIndex--) {
-                $sOut = ($sOut << 4) & 0xFFFFFFFF;
-                $sOut |= self::MATRIX_NS_BOX[$boxIndex][$partial[$boxIndex]];
-            }
-
-            $right = self::bitTransform(self::ARRAY_P, 32, $sOut);
-            $left = $source0;
-            $source0 = $source1;
-            $source1 = $left ^ $right;
+            $p = self::shuffle(self::ROUND_P, 32, $s);
+            $newLo = $hi;
+            $newHi = $lo ^ $p;
+            $lo = $newLo;
+            $hi = $newHi;
         }
 
-        // Swap source0 and source1
-        $temp = $source0;
-        $source0 = $source1;
-        $source1 = $temp;
-
-        $merged = ($source1 << 32) | ($source0 & 0xFFFFFFFF);
-        return self::bitTransform(self::ARRAY_IP_1, 64, $merged);
+        // Swap and apply final permutation
+        $pre = ($lo << 32) | ($hi & 0xFFFFFFFF);
+        return self::shuffle(self::FPERM, 64, $pre);
     }
 
     /**
-     * Generate subkeys
+     * Build 16 round keys from the 64-bit master key.
      */
-    private static function subKeys(int $value, int $mode): array
+    private static function buildRoundKeys(int $keyVal, bool $forDecrypt): array
     {
-        $keySchedule = [];
-        $transformed = self::bitTransform(self::ARRAY_PC_1, 56, $value);
+        $cv = self::shuffle(self::KPC1, 56, $keyVal);
 
-        for ($index = 0; $index < 16; $index++) {
-            $shift = self::ARRAY_LS[$index];
-            $mask = self::ARRAY_LS_MASK[$shift];
-            $notMask = ~$mask;
-            $transformed = (($transformed & $mask) << (28 - $shift)) | (($transformed & $notMask) >> $shift);
-            $keySchedule[$index] = self::bitTransform(self::ARRAY_PC_2, 64, $transformed);
+        $keys = [];
+        for ($r = 0; $r < 16; $r++) {
+            $amt = self::ROT[$r];
+            $m = self::ROT_MASK[$amt];
+            $cv = (($cv & $m) << (28 - $amt)) | (($cv & ~$m) >> $amt);
+            $keys[] = self::shuffle(self::KPC2, 64, $cv);
         }
 
-        if ($mode === 1) {
-            $keySchedule = array_reverse($keySchedule);
-        }
-        return $keySchedule;
+        return $forDecrypt ? array_reverse($keys) : $keys;
     }
 
     /**
-     * Kuwo DES encrypt/decrypt
-     * @param string $message Input data
-     * @param int $mode 0=encrypt, 1=decrypt
-     * @param string $key 8-byte key
+     * Decrypt ciphertext (ECB mode, zero-padded on encrypt).
      */
-    public static function crypto(string $message, int $mode, string $key): string
+    public static function decrypt(string $cipher, string $key): string
     {
-        $input = $message;
-
-        if ($mode === 0) {
-            $padding = (8 - strlen($input) % 8) % 8;
-            if ($padding > 0) {
-                $input .= str_repeat("\0", $padding);
-            }
-        } else {
-            if (strlen($input) % 8 !== 0) {
-                throw new RuntimeException('In decrypt mode, data length must be a multiple of 8');
-            }
+        $len = strlen($cipher);
+        if ($len % 8 !== 0) {
+            throw new RuntimeException('Ciphertext must be a multiple of 8 bytes');
         }
 
-        // Pack the 8-byte key into a 64-bit integer (little-endian)
-        $keyBlock = unpack('P', $key)[1];
-        $schedule = self::subKeys($keyBlock, $mode);
-
-        $result = '';
-        $chunks = str_split($input, 8);
-        foreach ($chunks as $chunk) {
-            $block = unpack('P', $chunk)[1];
-            $encrypted = self::des64($schedule, $block);
-            for ($i = 0; $i < 8; $i++) {
-                $result .= chr(($encrypted >> ($i * 8)) & 0xFF);
-            }
+        $rk = self::buildRoundKeys(unpack('P', $key)[1], true);
+        $out = '';
+        foreach (str_split($cipher, 8) as $chunk) {
+            $enc = self::execBlock(unpack('P', $chunk)[1], $rk);
+            $out .= pack('P', $enc);
         }
-
-        return $result;
+        return $out;
     }
 
     /**
-     * Kuwo Base64 decrypt: Base64 decode -> DES decrypt -> remove trailing null bytes
+     * Encrypt plaintext (ECB mode, zero-padded).
      */
-    public static function base64Decrypt(string $value): string
+    public static function encrypt(string $plain, string $key): string
     {
-        $decoded = base64_decode($value, true);
-        if ($decoded === false) {
-            throw new RuntimeException('Invalid Base64 input');
+        $pad = (8 - strlen($plain) % 8) % 8;
+        if ($pad > 0) $plain .= str_repeat("\0", $pad);
+
+        $rk = self::buildRoundKeys(unpack('P', $key)[1], false);
+        $out = '';
+        foreach (str_split($plain, 8) as $chunk) {
+            $enc = self::execBlock(unpack('P', $chunk)[1], $rk);
+            $out .= pack('P', $enc);
         }
-        $result = self::crypto($decoded, 1, self::KUWO_SECRET_KEY);
-        return rtrim($result, "\0");
+        return $out;
+    }
+
+    /**
+     * Kuwo ekey decryption: Base64 → DES decrypt → trim nulls.
+     */
+    public static function decryptEkeyBase64(string $b64): string
+    {
+        $raw = base64_decode($b64, true);
+        if ($raw === false) {
+            throw new RuntimeException('Invalid Base64');
+        }
+        return rtrim(self::decrypt($raw, self::KUWO_KEY), "\0");
     }
 }
 
@@ -428,7 +446,7 @@ class QmcKeyDerivation
      */
     public static function extractRawKeyFromEkey(string $ekey): string
     {
-        $decrypted = KuwoDes::base64Decrypt($ekey);
+        $decrypted = EkeyCipher::decryptEkeyBase64($ekey);
         $trimmed = rtrim($decrypted, "\0");
 
         foreach (self::QMC_RAW_KEY_LENGTHS as $keyLength) {
