@@ -59,7 +59,7 @@ http://你的服务器地址/decrypt.php?url=<加密文件URL>&ekey=<加密密�
 
 ### 配合落雪音乐使用
 
-在落雪音乐中配置自定义音乐源，将本服务器作为播放 URL 前缀。落雪音乐的插件会自动构造包含 `url` 和 `ekey` 参数的完整链接。
+在落雪音乐的自定义音源插件中配置本服务器地址。插件会构造包含 `url` 和 `ekey` 参数的链接 —— 你需要自行部署本服务器并在插件配置中填入地址（详见 [lx-music-xinghai-source](https://github.com/cdyUuu/lx-music-xinghai-source)）。
 
 ### 下载模式
 
@@ -191,8 +191,7 @@ QQ 音乐的 `.mgg` 文件采用 4 声道 OGG Vorbis 编码，标称码率 640kb
 本服务专为配合 LX Music 自定义音源插件使用：
 [lx-music-xinghai-source](https://github.com/cdyUuu/lx-music-xinghai-source)
 
-该插件会自动将酷我加密音频（`.mflac` / `.mgg`）路由到本中转服务器进行实时解密。
-**兼容性以该插件为准。**
+**你需要自行部署本服务器。** 插件默认不会连接任何解密服务器 —— 你需要在插件的 `KW_DECRYPT_PROXY` 配置区域填入你的服务器地址。配置完成后，插件才会将酷我加密音频（`.mflac` / `.mgg`）通过你的中转服务器进行实时解密。**兼容性以该插件为准。**
 
 ## 许可证
 

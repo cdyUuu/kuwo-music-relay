@@ -59,7 +59,7 @@ http://your-server/decrypt.php?url=<encrypted_file_url>&ekey=<encryption_key>
 
 ### With LX Music
 
-Configure your LX Music custom source to use this server as the playback URL prefix. LX Music plugins will automatically construct the full URL with `url` and `ekey` parameters.
+Configure your LX Music custom source plugin to point to this server. The plugin constructs URLs with `url` and `ekey` parameters — you must deploy this server yourself and fill in its address in the plugin configuration (see [lx-music-xinghai-source](https://github.com/cdyUuu/lx-music-xinghai-source) for details).
 
 ### Download mode
 
@@ -191,9 +191,12 @@ This project is intended for **personal study and technical research purposes on
 This server is designed to work with the LX Music custom source plugin:
 [lx-music-xinghai-source](https://github.com/cdyUuu/lx-music-xinghai-source)
 
-The plugin automatically routes Kuwo encrypted audio (`.mflac` / `.mgg`) through
-this relay server for real-time decryption. **Please use the above plugin as the
-canonical source for compatibility.**
+**You must deploy this server yourself.** The plugin does not connect to any
+server by default — you need to fill in your server address in the plugin's
+`KW_DECRYPT_PROXY` configuration. Once configured, the plugin routes Kuwo
+encrypted audio (`.mflac` / `.mgg`) through your relay server for real-time
+decryption. **Please use the above plugin as the canonical source for
+compatibility.**
 
 ## License
 
