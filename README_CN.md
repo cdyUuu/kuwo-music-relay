@@ -150,7 +150,7 @@ QQ 音乐的 `.mgg` 文件采用 4 声道 OGG Vorbis 编码，标称码率 640kb
 ├── docker-compose.yml  # Docker Compose 配置
 ├── README.md           # 英文文档
 ├── README_CN.md        # 中文文档（本文件）
-├── LICENSE             # MIT 许可证
+├── LICENSE             # PolyForm Noncommercial
 └── .gitignore          # Git 忽略规则
 ```
 
@@ -196,8 +196,8 @@ QQ 音乐的 `.mgg` 文件采用 4 声道 OGG Vorbis 编码，标称码率 640kb
 
 ## 许可证
 
-MIT 许可证（附加非商业使用限制）— 详见 [LICENSE](LICENSE)。
+PolyForm Noncommercial License 1.0.0 — 详见 [LICENSE](LICENSE)。
 
-本项目使用修改后的 MIT 许可证，**禁止商业用途**。
-商业用途包括出售软件、用于付费服务、传播解密内容牟利、或集成到商业产品中。
-个人学习、技术交流和非商业教育用途允许使用。
+本项目使用 [PolyForm Noncommercial License](https://polyformproject.org/licenses/noncommercial/1.0.0)，
+**禁止商业用途**。商业用途包括出售软件、用于付费服务、传播解密内容牟利、
+或集成到商业产品中。个人学习、技术交流和非商业教育用途允许使用。

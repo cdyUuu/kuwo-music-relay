@@ -150,7 +150,7 @@ Log rotation: when the log file exceeds `RELAY_MAX_LOG_SIZE`, the current file i
 ├── docker-compose.yml  # Docker Compose configuration
 ├── README.md           # English documentation
 ├── README_CN.md        # Chinese documentation
-├── LICENSE             # MIT License
+├── LICENSE             # PolyForm Noncommercial
 └── .gitignore          # Git ignore rules
 ```
 
@@ -197,10 +197,10 @@ canonical source for compatibility.**
 
 ## License
 
-MIT License with Non-Commercial Restriction — see [LICENSE](LICENSE) for details.
+PolyForm Noncommercial License 1.0.0 — see [LICENSE](LICENSE) for details.
 
-This project uses a modified MIT license that **prohibits commercial use**.
-Commercial use includes selling the software, using it in paid services,
-distributing decrypted content for profit, or integrating it into commercial
-products. Personal study, technical research, and non-commercial educational
-use are permitted.
+This project uses the [PolyForm Noncommercial License](https://polyformproject.org/licenses/noncommercial/1.0.0),
+which **prohibits commercial use**. Commercial use includes selling the software,
+using it in paid services, distributing decrypted content for profit, or
+integrating it into commercial products. Personal study, technical research, and
+non-commercial educational use are permitted.
