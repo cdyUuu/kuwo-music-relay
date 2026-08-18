@@ -1,0 +1,31 @@
+# Log files
+access.log
+access.log.old
+access.log.*
+
+# Cache directory
+/tmp/mflac_relay/
+mflac_relay/
+
+# Test files
+test_*.php
+test_*.mgg
+test_*.ogg
+test_*.flac
+test_*.mp3
+decrypt_classes.php
+dc.php
+
+# Docker
+docker-data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

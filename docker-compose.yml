@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  kuwo-relay:
+    build: .
+    container_name: kuwo-relay
+    ports:
+      - "8080:8080"
+    volumes:
+      - relay-cache:/tmp/mflac_relay
+    restart: unless-stopped
+
+volumes:
+  relay-cache:
