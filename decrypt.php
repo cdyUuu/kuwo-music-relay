@@ -908,8 +908,15 @@ class MflacRelayServer
             return;
         }
 
+        // Read query parameters (fallback for PHP built-in server HEAD request bug
+        // where $_GET is not populated for HEAD requests in some PHP versions)
         $url = $_GET['url'] ?? null;
         $ekey = $_GET['ekey'] ?? null;
+        if (($url === null || $ekey === null) && !empty($_SERVER['QUERY_STRING'])) {
+            parse_str($_SERVER['QUERY_STRING'], $qs);
+            $url = $url ?? ($qs['url'] ?? null);
+            $ekey = $ekey ?? ($qs['ekey'] ?? null);
+        }
 
         if (!$url || !$ekey) {
             $this->showHelpPage();
