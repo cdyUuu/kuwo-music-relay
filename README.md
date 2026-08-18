@@ -175,6 +175,17 @@ Contributions are welcome! Please follow these steps:
 
 The decryption algorithm is based on the Rust implementation from [nonebot-plugin-kuwo](https://github.com/006lp/nonebot-plugin-kuwo).
 
+## Disclaimer
+
+This project is intended for **personal study and technical research purposes only**.
+
+- This project does not host, store, or distribute any copyrighted audio files.
+- Users must obtain the necessary permissions or licenses from the copyright holders before using this tool.
+- The authors and contributors of this project are not responsible for any legal consequences arising from the use of this tool.
+- By using this project, you agree to bear all legal responsibilities for your actions.
+- If you are a copyright holder and believe this project infringes your rights, please contact the repository owner for removal.
+- Commercial use, redistribution of decrypted content, and any form of profit-making from this tool are strictly prohibited.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.

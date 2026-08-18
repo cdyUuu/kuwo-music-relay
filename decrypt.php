@@ -2180,6 +2180,18 @@ class MflacRelayServer
                 <h2 class="t-en" style="display:none;">Direct Usage</h2>
                 <code id="usage">http://{$scriptUrl}?url=<file_url>&ekey=<key></code>
             </div>
+            <div class="note t-zh" style="margin-top:24px;border:1px solid #475569;border-left:3px solid #f59e0b;">
+                <strong style="color:#f59e0b;">免责声明</strong><br>
+                本项目仅供个人学习与技术交流使用，不存储、不托管、不分发任何受版权保护的音乐文件。<br>
+                使用本工具前请确保已获得版权所有者的授权。使用者需自行承担一切法律责任。<br>
+                严禁用于商业用途或传播解密后的内容。
+            </div>
+            <div class="note t-en" style="display:none;margin-top:24px;border:1px solid #475569;border-left:3px solid #f59e0b;">
+                <strong style="color:#f59e0b;">Disclaimer</strong><br>
+                For personal study and technical research only. This project does not host, store, or distribute copyrighted audio files.<br>
+                Ensure you have proper authorization before using this tool. Users bear all legal responsibilities.<br>
+                Commercial use and redistribution of decrypted content are strictly prohibited.
+            </div>
         </div>
     </div>
     <script>
