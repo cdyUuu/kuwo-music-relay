@@ -171,10 +171,6 @@ Contributions are welcome! Please follow these steps:
 - Update the README if you add new configuration options
 - Follow the existing code style (PSR-12 compatible)
 
-## Algorithm Reference
-
-The DES implementation is based on the federal standard [FIPS PUB 46-3](https://csrc.nist.gov/publications/detail/fips/46/3/archive/1999-10-25) (Data Encryption Standard). The QMC encryption scheme was reverse-engineered for interoperability purposes.
-
 ## Disclaimer
 
 This project is intended for **personal study and technical research purposes only**.

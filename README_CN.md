@@ -171,10 +171,6 @@ QQ 音乐的 `.mgg` 文件采用 4 声道 OGG Vorbis 编码，标称码率 640kb
 - 如果新增配置项，请同步更新 README 文档
 - 遵循现有代码风格（PSR-12 兼容）
 
-## 算法参考
-
-DES 实现基于美国联邦标准 [FIPS PUB 46-3](https://csrc.nist.gov/publications/detail/fips/46/3/archive/1999-10-25)（数据加密标准）。QMC 加密方案通过逆向工程实现互操作。
-
 ## 免责声明
 
 本项目仅供**个人学习与技术交流**使用。
