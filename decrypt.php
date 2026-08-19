@@ -39,7 +39,7 @@ define('RELAY_MAX_CACHE_SIZE', 536870912); // Max total cache size in bytes (def
 define('RELAY_MAX_CACHE_FILES', 50);       // Max number of cached files
 define('RELAY_MAX_LOG_SIZE', 10485760);    // Max log file size in bytes (default: 10MB)
 define('RELAY_MEMORY_LIMIT', '256M');       // PHP memory limit for this script
-define('RELAY_ALLOW_PRIVATE_IP', false);   // Allow private/reserved IPs (set true for local/LAN use)
+define('RELAY_ALLOW_PRIVATE_IP', true);   // Allow private/reserved IPs (set true for local/LAN use)
 define('RELAY_VERSION', '1.0.0');           // Server version
 // ============================================================
 
@@ -908,8 +908,20 @@ class MflacRelayServer
             return;
         }
 
-        // Read query parameters (fallback for PHP built-in server HEAD request bug
-        // where $_GET is not populated for HEAD requests in some PHP versions)
+        // Health check endpoint
+        $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
+        $requestPath = ltrim($requestPath, '/');
+        $baseName = basename($requestPath);
+        if (in_array($requestPath, ['ping', 'health', 'healthcheck'], true) ||
+            in_array($baseName, ['ping', 'health', 'healthcheck'], true)) {
+            http_response_code(200);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo 'pong';
+            return;
+        }
+
+        // Read query parameters (fallback for PHP built-in server bug where
+        // $_GET is not populated for HEAD requests in some PHP versions)
         $url = $_GET['url'] ?? null;
         $ekey = $_GET['ekey'] ?? null;
         if (($url === null || $ekey === null) && !empty($_SERVER['QUERY_STRING'])) {
@@ -1003,14 +1015,10 @@ class MflacRelayServer
                         ]);
                     }
                 } else {
-                    // Cache does not exist, fast HEAD probe for file size only
-                    // Don't download/decrypt for metadata — player gets it from the stream
-                    $remoteSize = $this->getRemoteFileSize($url);
-                    if ($remoteSize > 0) {
-                        @file_put_contents($cacheFile . '.size', (string)$remoteSize);
-                    }
-                    $this->log('INFO', 'HEAD request (no cache)', [
-                        'remote_size' => $remoteSize,
+                    // Cache does not exist — return minimal headers immediately.
+                    // Do NOT probe CDN for file size (that blocks the player for seconds).
+                    // The player will send a GET request and get Content-Length from the stream.
+                    $this->log('INFO', 'HEAD request (no cache, skipping CDN probe)', [
                         'format' => $this->audioFormat,
                     ]);
                     http_response_code(200);
@@ -1018,9 +1026,6 @@ class MflacRelayServer
                     header('Accept-Ranges: bytes');
                     header('Cache-Control: public, max-age=3600');
                     header('X-Accel-Buffering: no');
-                    if ($remoteSize > 0) {
-                        header('Content-Length: ' . $remoteSize);
-                    }
                 }
                 $this->log('INFO', 'Request completed', [
                     'source' => 'head',
