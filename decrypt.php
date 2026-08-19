@@ -1377,14 +1377,11 @@ class MflacRelayServer
             CURLOPT_TIMEOUT => 3,
             CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_HTTPHEADER => [
-                'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            ],
+            CURLOPT_HTTPHEADER => $this->getCdnHeaders(),
         ]);
         curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $contentLength = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
-        curl_close($ch);
 
         if (($httpCode === 200 || $httpCode === 206) && $contentLength > 0) {
             $result['size'] = (int)$contentLength;
@@ -1400,13 +1397,10 @@ class MflacRelayServer
                 CURLOPT_TIMEOUT => 3,
                 CURLOPT_CONNECTTIMEOUT => 3,
                 CURLOPT_SSL_VERIFYPEER => false,
-                CURLOPT_HTTPHEADER => [
-                    'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                ],
+                CURLOPT_HTTPHEADER => $this->getCdnHeaders(),
             ]);
             $data = curl_exec($ch);
             $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
 
             if ($data !== false && strlen($data) >= 42 && ($code === 200 || $code === 206)) {
                 try {
@@ -1437,12 +1431,9 @@ class MflacRelayServer
                 CURLOPT_SSL_VERIFYPEER => false,
                 CURLOPT_HEADER => true,
                 CURLOPT_NOBODY => false,
-                CURLOPT_HTTPHEADER => [
-                    'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                ],
+                CURLOPT_HTTPHEADER => $this->getCdnHeaders(),
             ]);
             $response = curl_exec($ch);
-            curl_close($ch);
 
             if (preg_match('/Content-Range:\s*bytes\s+\d+-\d+\/(\d+)/i', $response, $m)) {
                 $result['size'] = (int)$m[1];
@@ -1450,6 +1441,21 @@ class MflacRelayServer
         }
 
         return $result;
+    }
+
+    /**
+     * Get common HTTP headers for CDN requests
+     * Some Kuwo CDN servers require Referer and other headers to avoid 403
+     */
+    private function getCdnHeaders(): array
+    {
+        return [
+            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept: */*',
+            'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+            'Referer: https://www.kuwo.cn/',
+            'Connection: keep-alive',
+        ];
     }
 
     /**
@@ -1465,14 +1471,11 @@ class MflacRelayServer
             CURLOPT_TIMEOUT => 3,
             CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_HTTPHEADER => [
-                'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            ],
+            CURLOPT_HTTPHEADER => $this->getCdnHeaders(),
         ]);
         curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $contentLength = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
-        curl_close($ch);
 
         if (($httpCode === 200 || $httpCode === 206) && $contentLength > 0) {
             return (int)$contentLength;
@@ -1489,12 +1492,9 @@ class MflacRelayServer
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_HEADER => true,
             CURLOPT_NOBODY => false,
-            CURLOPT_HTTPHEADER => [
-                'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            ],
+            CURLOPT_HTTPHEADER => $this->getCdnHeaders(),
         ]);
         $response = curl_exec($ch);
-        curl_close($ch);
 
         // Parse Content-Range: bytes 0-0/12345
         if (preg_match('/Content-Range:\s*bytes\s+\d+-\d+\/(\d+)/i', $response, $m)) {
@@ -1543,6 +1543,8 @@ class MflacRelayServer
         $remoteFileSize = 0;            // File size obtained from CDN response headers
         $lastFlushTime = microtime(true); // Last flush time
         $clientDisconnected = false;     // Whether client has disconnected
+        $cdnResponseCode = 0;           // HTTP status code from CDN response
+        $errorBody = '';                // CDN error response body (for 403/404 etc.)
 
         // Resume: load total size from .size file
         if ($isResume) {
@@ -1552,8 +1554,12 @@ class MflacRelayServer
             }
         }
 
-        // cURL header callback: capture total file size (prefer Content-Range, then Content-Length)
-        $headerCallback = function ($ch, $header) use (&$remoteFileSize, $cacheFile) {
+        // cURL header callback: capture HTTP status + total file size
+        $headerCallback = function ($ch, $header) use (&$remoteFileSize, &$cdnResponseCode, $cacheFile) {
+            // Detect HTTP status line (e.g., "HTTP/1.1 403 Forbidden")
+            if (preg_match('/^HTTP\/\S+\s+(\d{3})/', trim($header), $m)) {
+                $cdnResponseCode = (int)$m[1];
+            }
             // Content-Range: bytes X-Y/Z → Z is the total size (always correct in Range responses)
             if (preg_match('/Content-Range:\s*bytes\s+\d+-\d+\/(\d+)/i', $header, $m)) {
                 $remoteFileSize = (int)$m[1];
@@ -1700,6 +1706,7 @@ class MflacRelayServer
         $writeCallback = function ($ch, $data) use (
             &$buffer, &$totalDownloaded, &$processChunk,
             &$clientDisconnected, &$firstChunkSent,
+            &$cdnResponseCode, &$errorBody,
             $checkConnection, $self
         ) {
             // Client disconnected, stop processing (returning 0 will abort cURL)
@@ -1709,6 +1716,18 @@ class MflacRelayServer
 
             $len = strlen($data);
             $totalDownloaded += $len;
+
+            // If CDN returned an error (403/404/etc.), capture body for logging
+            // instead of passing it to the decrypt function
+            if ($cdnResponseCode !== 0 && $cdnResponseCode !== 200 && $cdnResponseCode !== 206) {
+                $errorBody .= $data;
+                // Limit captured body to 4KB to avoid memory issues
+                if (strlen($errorBody) > 4096) {
+                    $errorBody = substr($errorBody, 0, 4096);
+                }
+                return $len;
+            }
+
             $buffer .= $data;
 
             // First chunk: send immediately for fastest first-byte response
@@ -1746,11 +1765,7 @@ class MflacRelayServer
             // Low-speed detection: abort if download speed is below 1KB/s for 30 consecutive seconds
             CURLOPT_LOW_SPEED_LIMIT => 1024,
             CURLOPT_LOW_SPEED_TIME => 30,
-            CURLOPT_HTTPHEADER => [
-                'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept: */*',
-                'Connection: keep-alive',
-            ],
+            CURLOPT_HTTPHEADER => $this->getCdnHeaders(),
         ];
         // Resume: start downloading from the cached position
         if ($isResume) {
@@ -1762,7 +1777,6 @@ class MflacRelayServer
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $dlSize = curl_getinfo($ch, CURLINFO_SIZE_DOWNLOAD);
         $error = curl_error($ch);
-        curl_close($ch);
 
         // If headers haven't been sent yet (file too small, less than first chunk size), send them here
         if (!$headersSent && strlen($buffer) > 0) {
@@ -1823,9 +1837,15 @@ class MflacRelayServer
         }
 
         if (!$success || ($httpCode !== 200 && $httpCode !== 206) || $totalDownloaded === 0) {
+            // Build detailed error message including CDN response body
+            $errorDetail = $error;
+            if ($errorBody !== '') {
+                $errorDetail .= ' | CDN response: ' . trim($errorBody);
+            }
+
             // Data already sent to player: don't delete cache, just log the error
             if ($headersSent) {
-                $this->log('ERROR', "Download interrupted (partial data already sent) HTTP {$httpCode}: {$error}");
+                $this->log('ERROR', "Download interrupted (partial data already sent) HTTP {$httpCode}: {$errorDetail}");
                 if (!$isResume) {
                     @unlink($cacheFile);
                 }
@@ -1835,7 +1855,17 @@ class MflacRelayServer
             if (!$isResume) {
                 @unlink($cacheFile);
             }
-            throw new RuntimeException("Download failed (HTTP {$httpCode}, {$totalDownloaded} bytes): {$error}");
+
+            // Provide user-friendly error message for common CDN errors
+            if ($httpCode === 403) {
+                throw new RuntimeException(
+                    "Download failed (HTTP 403): CDN rejected the request. "
+                    . "The URL may have expired or the CDN requires specific headers. "
+                    . "Please get a fresh URL from Kuwo. "
+                    . "Detail: {$errorDetail}"
+                );
+            }
+            throw new RuntimeException("Download failed (HTTP {$httpCode}, {$totalDownloaded} bytes): {$errorDetail}");
         }
 
         // Verify cache file
@@ -1909,10 +1939,16 @@ class MflacRelayServer
         $totalDecrypted = 0;
         $headersSent = false;
         $cdnHttpCode = 0;
+        $cdnResponseCode = 0;       // HTTP status code from CDN response header
+        $errorBody = '';            // CDN error response body (for 403/404 etc.)
         $clientDisconnected = false;
 
-        // cURL header callback: capture total size from Content-Range or Content-Length
-        $headerCallback = function ($ch, $header) use (&$totalSize, $sizeFile) {
+        // cURL header callback: capture HTTP status + total size from Content-Range or Content-Length
+        $headerCallback = function ($ch, $header) use (&$totalSize, &$cdnResponseCode, $sizeFile) {
+            // Detect HTTP status line (e.g., "HTTP/1.1 403 Forbidden")
+            if (preg_match('/^HTTP\/\S+\s+(\d{3})/', trim($header), $m)) {
+                $cdnResponseCode = (int)$m[1];
+            }
             if (preg_match('/Content-Range:\s*bytes\s+\d+-\d+\/(\d+)/i', $header, $m)) {
                 $totalSize = (int)$m[1];
                 @file_put_contents($sizeFile, (string)$totalSize);
@@ -1998,6 +2034,7 @@ class MflacRelayServer
         $writeCallback = function ($ch, $data) use (
             &$buffer, &$totalDownloaded, &$processChunk,
             &$clientDisconnected, &$firstChunkSent,
+            &$cdnResponseCode, &$errorBody,
             $checkConnection
         ) {
             if ($clientDisconnected) {
@@ -2006,6 +2043,16 @@ class MflacRelayServer
 
             $len = strlen($data);
             $totalDownloaded += $len;
+
+            // If CDN returned an error (403/404/etc.), capture body for logging
+            if ($cdnResponseCode !== 0 && $cdnResponseCode !== 200 && $cdnResponseCode !== 206) {
+                $errorBody .= $data;
+                if (strlen($errorBody) > 4096) {
+                    $errorBody = substr($errorBody, 0, 4096);
+                }
+                return $len;
+            }
+
             $buffer .= $data;
 
             // First chunk: send immediately (even if small) for fastest first-byte
@@ -2044,17 +2091,12 @@ class MflacRelayServer
             CURLOPT_RANGE => $cdnRange,
             CURLOPT_LOW_SPEED_LIMIT => 1024,
             CURLOPT_LOW_SPEED_TIME => 30,
-            CURLOPT_HTTPHEADER => [
-                'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept: */*',
-                'Connection: keep-alive',
-            ],
+            CURLOPT_HTTPHEADER => $this->getCdnHeaders(),
         ]);
 
         $success = curl_exec($ch);
         $cdnHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
-        curl_close($ch);
 
         // Output remaining data in buffer
         if (strlen($buffer) > 0 && !$clientDisconnected) {
@@ -2080,12 +2122,20 @@ class MflacRelayServer
 
         // CDN returned an error (URL expired, etc.)
         if (!$success || ($cdnHttpCode !== 200 && $cdnHttpCode !== 206) || $totalDownloaded === 0) {
+            $errorDetail = $error;
+            if ($errorBody !== '') {
+                $errorDetail .= ' | CDN response: ' . trim($errorBody);
+            }
             if (!$headersSent) {
                 http_response_code(502);
                 header('Content-Type: text/plain; charset=utf-8');
-                echo "CDN error: HTTP {$cdnHttpCode}";
+                if ($cdnHttpCode === 403) {
+                    echo "CDN error: HTTP 403 — URL may have expired. Please get a fresh URL from Kuwo.";
+                } else {
+                    echo "CDN error: HTTP {$cdnHttpCode}";
+                }
             }
-            $this->log('ERROR', "Range CDN request failed: HTTP {$cdnHttpCode}, {$error}");
+            $this->log('ERROR', "Range CDN request failed: HTTP {$cdnHttpCode}, {$errorDetail}");
         }
     }
 
